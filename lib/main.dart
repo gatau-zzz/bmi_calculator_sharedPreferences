@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'models/bmi_category.dart';
 import 'services/bmi_service.dart';
+import 'services/storage_service.dart';
 
 void main() => runApp(const MyApp());
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
-  Widget build(BuildContext context) => MaterialApp(home: const BmiHome());
+  Widget build(BuildContext context) =>
+      MaterialApp(debugShowCheckedModeBanner: false, home: const BmiHome());
 }
 
 class BmiHome extends StatefulWidget {
@@ -23,14 +25,41 @@ class _BmiHomeState extends State<BmiHome> {
   @override
   void initState() {
     super.initState();
-    _futureCats = BmiService.fetchCategories();
+    // Load last inputs
+    StorageService.loadInputs().then((m) {
+      setState(() {
+        _height = m['height']!;
+        _weight = m['weight']!;
+      });
+    });
+
+    // Load cache atau fetch baru
+    _futureCats = StorageService.loadCachedCategories().then((cache) {
+      if (cache != null) return cache;
+      return BmiService.fetchCategories().then((fresh) {
+        StorageService.cacheCategories(fresh);
+        return fresh;
+      });
+    });
+  }
+
+  void showResult(BuildContext ctx) {
+    final bmi = _weight / ((_height / 100) * (_height / 100));
+    // Simpan input sebelum pindah halaman
+    StorageService.saveInputs(_height, _weight);
+    Navigator.push(
+      ctx,
+      MaterialPageRoute(
+        builder: (_) => BmiResult(bmi: bmi, futureCats: _futureCats),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // Form input tinggi & berat (sama seperti praktikum BMI Anda)
+    // Form input tinggi & berat dengan Slider
     return Scaffold(
-      appBar: AppBar(title: const Text('BMI Calculator (Async)')),
+      appBar: AppBar(title: const Text('BMI Calculator')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -59,16 +88,6 @@ class _BmiHomeState extends State<BmiHome> {
       ),
     );
   }
-
-  void showResult(BuildContext ctx) {
-    final bmi = _weight / ((_height / 100) * (_height / 100));
-    Navigator.push(
-      ctx,
-      MaterialPageRoute(
-        builder: (_) => BmiResult(bmi: bmi, futureCats: _futureCats),
-      ),
-    );
-  }
 }
 
 class BmiResult extends StatelessWidget {
@@ -89,6 +108,10 @@ class BmiResult extends StatelessWidget {
           if (snap.hasError) {
             return Center(child: Text('Error: ${snap.error}'));
           }
+          if (!snap.hasData || snap.data!.isEmpty) {
+            return const Center(child: Text('No data'));
+          }
+
           final cats = snap.data!;
           final cat = cats.firstWhere(
             (c) => bmi >= c.min && bmi < c.max,
@@ -114,6 +137,17 @@ class BmiResult extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text('Advice: ${cat.advice}'),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () {
+                    StorageService.clearCache().then((_) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Cache cleared!')),
+                      );
+                    });
+                  },
+                  child: const Text('Clear Cache'),
+                ),
               ],
             ),
           );
